@@ -1426,8 +1426,44 @@ launch_vscode_linux() {
     disown 2>/dev/null || true
 }
 
+# Add the VS Code \bin dir to the Wine user PATH inside the prefix. UEFN's
+# Windows build detects VS Code by finding `code`/`code.cmd` on the Windows
+# PATH (not by checking the install folder), so without this entry its "open
+# code" button reports "you do not have it installed". Uses the Proton-bundled
+# wine to write the HKCU\Environment Path value so Wine persists it properly.
+register_vscode_path() {
+    local proton="$1" prefix="$2"
+
+    # Derive the wine binary from the proton wrapper location.
+    local pdir wine
+    pdir="$(cd "$(dirname "$proton")" 2>/dev/null && pwd)"
+    wine="$pdir/files/bin/wine"
+
+    if [[ ! -x "$wine" ]]; then
+        warn "Could not find Proton's wine binary to register VS Code on PATH."
+        info "You may need to add the VS Code bin folder to the prefix PATH manually."
+        return 1
+    fi
+
+    local bin_path='C:\users\steamuser\AppData\Local\Programs\Microsoft VS Code\bin'
+    local pfx="$prefix/pfx"
+
+    info "Adding VS Code bin to the Windows PATH in the prefix (so UEFN detects it)..."
+    if WINEDEBUG=-all WINEPREFIX="$pfx" WINEPATH= WINEOVERRIDES=-all \
+        "$wine" reg add "HKCU\\Environment" /v Path /t REG_EXPAND_SZ \
+        /d "$bin_path" /f >/dev/null 2>&1; then
+        # Flush the hive so the value is persisted to user.reg on disk.
+        local ws
+        ws="$(dirname "$wine")/wineserver"
+        [[ -x "$ws" ]] && WINEDEBUG=-all WINEPREFIX="$pfx" "$ws" -k >/dev/null 2>&1 || true
+        success "VS Code registered on the Windows PATH."
+    else
+        warn "Failed to write the PATH registry entry with wine."
+        return 1
+    fi
+}
+
 install_vscode_proton() {
-    local vscode_dir="$1"
 
     local proton
     if ! proton="$(get_proton)"; then
@@ -1560,6 +1596,10 @@ PYEOF
     # Install every bundled plugin (.vsix) directly, since Code.exe's CLI hangs
     # under Wine/Proton.
     install_vsix_batch "$vscode_dir" "$user_dir/extensions" windows
+
+    # UEFN detects VS Code by finding `code` on the Windows PATH; register the
+    # bin folder so its "open code" button no longer says it's not installed.
+    register_vscode_path "$proton" "$prefix"
 
     success "VS Code + plugins installed into the Proton prefix."
     echo
