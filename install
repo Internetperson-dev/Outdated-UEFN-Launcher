@@ -1800,6 +1800,45 @@ apply_uefn_window_icon() {
     fi
 }
 
+# GNOME does not show the _NET_WM_ICON property in the dock/taskbar; it matches
+# windows to a .desktop entry by StartupWMClass and uses that entry's Icon.
+# This writes a UEFN.desktop (Icon=icon.png, StartupWMClass=steam_proton) so
+# the running Proton window gets the icon in the GNOME shell.
+ensure_gnome_launcher() {
+    local apps_dir="$HOME/.local/share/applications"
+    mkdir -p "$apps_dir"
+
+    local icon
+    if ! icon="$(find_uefn_icon)"; then
+        warn "No icon.png found; .desktop entry will reference a named icon."
+        icon="uefn"
+    fi
+
+    local launcher="$apps_dir/uefn.desktop"
+    local script_path
+    script_path="$(cd "$(dirname "$0")" && pwd)/install"
+
+    cat > "$launcher" <<EOF
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Unreal Editor for Fortnite
+Comment=Launch UEFN via Proton (uefn-installer)
+Exec=bash "$script_path" launch
+Icon=$icon
+Terminal=false
+Categories=Development;IDE;
+StartupNotify=false
+StartupWMClass=steam_proton
+EOF
+
+    # Refresh the desktop database so GNOME notices the new entry immediately.
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$apps_dir" >/dev/null 2>&1 || true
+    fi
+    info "Updated GNOME launcher: $launcher"
+}
+
 ###############################################################################
 # Launch
 ###############################################################################
@@ -1934,7 +1973,9 @@ launch_uefn() {
     "${final_cmd[@]}" &
     local proton_pid=$!
 
-    # Apply the game window icon (icon.png) once UEFN's window appears.
+    # Ensure GNOME shows an icon for the game (via .desktop + StartupWMClass),
+    # then set the live window icon once it appears.
+    ensure_gnome_launcher
     apply_uefn_window_icon &
 
     # Check and set CPU limit based on current user
