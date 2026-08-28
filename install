@@ -1471,48 +1471,55 @@ install_vscode_proton() {
     echo "  $prefix"
     echo
 
-    if [[ ! -f "$code_exe" ]]; then
-        # The bundled VSCodeSetup*.exe installer cannot run under Wine/Proton
-        # (FreeType font library error), so fetch the win32-x64 archive and
-        # extract it natively instead.
-        if ! command -v unzip &>/dev/null; then
-            error "'unzip' is required to extract VS Code."
-            exit 1
-        fi
-
-        local zip_url="https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-archive"
-        local tmp
-        tmp="$(mktemp --suffix=.zip)"
-
-        info "Downloading VS Code (win32-x64 archive)..."
-        curl -fsSL -o "$tmp" "$zip_url" || {
-            rm -f "$tmp"
-            error "Failed to download VS Code."
-            exit 1
-        }
-
-        info "Extracting VS Code into the prefix..."
-        mkdir -p "$code_dir"
-        unzip -q -o "$tmp" -d "$code_dir"
-        rm -f "$tmp"
-
-        # The archive has a single top-level folder (build hash); flatten it.
-        local top
-        top="$(find "$code_dir" -mindepth 1 -maxdepth 1 -type d -print -quit)"
-        if [[ -n "$top" && -d "$top" && ! -e "$code_dir/Code.exe" ]]; then
-            mv "$top"/* "$code_dir"/ 2>/dev/null
-            rmdir "$top" 2>/dev/null
-        fi
-
-        if [[ ! -f "$code_exe" ]]; then
-            error "VS Code did not appear in the prefix at the expected location:"
-            echo "  $code_exe"
-            exit 1
-        fi
-        success "VS Code installed."
-    else
-        info "VS Code already installed in the prefix. Re-running plugin install only."
+    # Always (re)install VS Code using Microsoft's per-user installer so it is
+    # laid out properly in the prefix (AppData\Local\Programs\Microsoft VS Code)
+    # instead of being unzipped. The Inno Setup installer runs fine under
+    # Wine/Proton with silent flags once the prefix is initialized.
+    if ! command -v unzip &>/dev/null; then
+        info "'unzip' is not installed; it is only needed if the installer fails."
     fi
+
+    local setup_url="https://code.visualstudio.com/sha/download?build=stable&os=win32-x64-user"
+    local tmp
+    tmp="$(mktemp --suffix=.exe)"
+
+    info "Downloading VS Code installer (win32-x64-user)..."
+    curl -fsSL -o "$tmp" "$setup_url" || {
+        rm -f "$tmp"
+        error "Failed to download VS Code installer."
+        exit 1
+    }
+
+    info "Running VS Code installer under Proton (silent)..."
+    # Silent per-user install into the prefix. No restart, no shortcuts, don't
+    # launch code after install. Exit code is not reliable through Proton, so
+    # success is verified by the presence of Code.exe afterwards.
+    "$proton" run "$tmp" \
+        /VERYSILENT /NORESTART /SUPPRESSMSGBOXES /NOCANCEL /SP- \
+        /MERGETASKS=!runcode,!desktopicon,!quicklaunchicon || true
+    rm -f "$tmp"
+
+    # Sanity-check a few places the user installer might drop Code.exe.
+    if [[ ! -f "$code_exe" ]]; then
+        # The Windows user install lands in %LOCALAPPDATA%\Programs. Proton maps
+        # LOCALAPPDATA to the steam user; also check the default all-users spot.
+        local alt="$prefix/pfx/drive_c/Program Files/Microsoft VS Code/Code.exe"
+        if [[ -f "$alt" ]]; then
+            info "VS Code installer placed it in Program Files; moving to expected location..."
+            mkdir -p "$code_dir"
+            mv "$alt" "$code_dir/Code.exe" 2>/dev/null || true
+        fi
+    fi
+
+    if [[ ! -f "$code_exe" ]]; then
+        error "The VS Code installer did not produce Code.exe in the prefix."
+        echo "Expected:"
+        echo "  $code_exe"
+        echo
+        echo "The silent installer may have failed under this Proton version."
+        exit 1
+    fi
+    success "VS Code installed into the prefix via the installer."
 
     # Disable GPU acceleration and the Chromium sandbox so VS Code runs smoothly
     # under Wine/Proton without lagging the system. Persisted in argv.json so
