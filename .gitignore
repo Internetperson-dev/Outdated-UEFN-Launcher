@@ -8,3 +8,7 @@ ram_usage_*.csv
 
 # Editor/backup files
 *~
+
+# Local asset (referenced by path; not part of the repo)
+icon.png
+.cache/

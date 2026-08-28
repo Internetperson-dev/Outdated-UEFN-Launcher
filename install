@@ -1641,8 +1641,164 @@ launch_vscode_proton() {
 }
 
 ###############################################################################
-# Launch
+# UEFN window icon (icon.png) for the running game under Proton
 ###############################################################################
+
+# Locate the UEFN icon (icon.png) placed beside the installer/repo.
+find_uefn_icon() {
+    local c
+    for c in \
+        "$(dirname "$0")/icon.png" \
+        "$(dirname "$0")/.icon.png" \
+        "$CONFIG_DIR/icon.png" \
+        "$HOME/Downloads/icon.png"
+    do
+        [[ -f "$c" ]] && { echo "$c"; return 0; }
+    done
+    return 1
+}
+
+# Generate the _NET_WM_ICON pixel data (CARDINAL array) from a PNG into $2.
+generate_netwm_data() {
+    local png="$1" out="$2"
+    if python3 -c 'import PIL' 2>/dev/null; then
+        python3 - "$png" "$out" <<'PY'
+import sys
+from PIL import Image
+src, dst = sys.argv[1], sys.argv[2]
+img = Image.open(src).convert('RGBA')
+img.thumbnail((128, 128))
+w, h = img.size
+px = img.load()
+vals = [f"{w},{h}"]
+for y in range(h):
+    for x in range(w):
+        r, g, b, a = px[x, y]
+        vals.append(str(((a << 24) & 0xFFFFFFFF) | (r << 16) | (g << 8) | b))
+open(dst, 'w').write(','.join(vals))
+PY
+    elif command -v convert >/dev/null 2>&1; then
+        # ImageMagick fallback: output raw RGBA, wrap into the CARDINAL array.
+        python3 - "$png" "$out" <<'PY'
+import sys, subprocess
+from struct import unpack
+src, dst = sys.argv[1], sys.argv[2]
+raw = subprocess.run(
+    ['convert', src, '-resize', '128x128>', '-depth', '8', 'rgba:-'],
+    check=True, capture_output=True).stdout
+w = h = int((len(raw) // 4) ** 0.5)
+vals = [f"{w},{h}"]
+for i in range(0, len(raw), 4):
+    r, g, b, a = raw[i], raw[i+1], raw[i+2], raw[i+3]
+    vals.append(str(((a << 24) & 0xFFFFFFFF) | (r << 16) | (g << 8) | b))
+open(dst, 'w').write(','.join(vals))
+PY
+    else
+        return 1
+    fi
+    [[ -s "$out" ]] || return 1
+}
+
+# Build the tiny Xlib helper that applies _NET_WM_ICON (avoids ARG_MAX limits).
+ensure_seticon_bin() {
+    local bin="$1"
+    [[ -x "$bin" ]] && return 0
+    local cc="${CC:-gcc}"
+    command -v "$cc" >/dev/null 2>&1 || cc=cc
+    command -v "$cc" >/dev/null 2>&1 || return 1
+    local src="$bin.c"
+    cat > "$src" <<'EOF'
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/Xatom.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+int main(int argc, char **argv) {
+    if (argc != 3) { fprintf(stderr, "usage: %s <window-id> <icon-file>\n", argv[0]); return 2; }
+    Display *d = XOpenDisplay(NULL);
+    if (!d) { fprintf(stderr, "cannot open display\n"); return 2; }
+    Window w = (Window)strtoul(argv[1], NULL, 0);
+    FILE *f = fopen(argv[2], "r");
+    if (!f) { XCloseDisplay(d); return 2; }
+    char *line = NULL; size_t lcap = 0; ssize_t len;
+    if ((len = getline(&line, &lcap, f)) < 0) { free(line); fclose(f); XCloseDisplay(d); return 2; }
+    unsigned long *buf = NULL; size_t bcap = 0, bcnt = 0, wd = 0, ht = 0;
+    char *p = line;
+    while (*p) {
+        if (*p==','||*p=='\n'||*p=='\r'||*p==' ') { p++; continue; }
+        unsigned long v = strtoul(p, &p, 10);
+        if (bcnt >= bcap) { bcap = bcap?bcap*2:4096; buf = realloc(buf, bcap*sizeof(unsigned long)); }
+        buf[bcnt++] = v;
+    }
+    free(line); fclose(f);
+    if (bcnt < 2) { free(buf); XCloseDisplay(d); return 2; }
+    wd = buf[0]; ht = buf[1];
+    if (bcnt != 2 + wd*ht) { free(buf); XCloseDisplay(d); return 2; }
+    Atom icons = XInternAtom(d, "_NET_WM_ICON", False);
+    XChangeProperty(d, w, icons, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)buf, 2 + wd*ht);
+    XFlush(d);
+    free(buf); XCloseDisplay(d);
+    return 0;
+}
+EOF
+    "$cc" -O2 -o "$bin" "$src" -lX11 2>/dev/null
+    rm -f "$src"
+    [[ -x "$bin" ]]
+}
+
+# Set the UEFN game window's icon to icon.png. Polls for the window to appear,
+# then applies _NET_WM_ICON. Depends on xdotool/xprop and the compiled helper.
+apply_uefn_window_icon() {
+    command -v xdotool >/dev/null 2>&1 || { warn "xdotool missing; skipping window icon."; return 1; }
+
+    local png icon
+    if ! png="$(find_uefn_icon)"; then
+        info "No icon.png found near the installer; skipping game window icon."
+        return 1
+    fi
+    icon="$(find_uefn_icon)"
+
+    local cache="$CONFIG_DIR/cache"
+    mkdir -p "$cache"
+    local data="$cache/uefn_icon.netwm"
+    local bin="$cache/seticon"
+
+    if ! ensure_seticon_bin "$bin"; then
+        warn "Could not build the icon helper (need gcc/cc + X11 headers)."
+        return 1
+    fi
+
+    # Regenerate icon data only if the png is newer than what we last produced.
+    if [[ ! -s "$data" || "$png" -nt "$data" ]]; then
+        info "Setting up $png as the game window icon..."
+        if ! generate_netwm_data "$png" "$data"; then
+            warn "Could not convert icon.png (need python3+PIL or ImageMagick)."
+            return 1
+        fi
+    fi
+
+    # Poll for the UEFN window (it can take a while to appear while booting).
+    local window="" t
+    for t in $(seq 1 240); do
+        window="$(xdotool search --name 'Unreal Editor' 2>/dev/null | head -1)"
+        [[ -n "$window" ]] && break
+        window="$(xdotool search --name 'UnrealEditor\|UEFN\|Fortnite' --onlyvisible 2>/dev/null | head -1)"
+        [[ -n "$window" ]] && break
+        sleep 1
+    done
+
+    if [[ -z "$window" ]]; then
+        info "UEFN window not found before timeout; icon not applied."
+        return 1
+    fi
+
+    if "$bin" "$window" "$data"; then
+        info "Applied icon ($(basename "$png")) to UEFN window."
+    else
+        warn "Failed to apply the window icon."
+    fi
+}
 
 ###############################################################################
 # Launch
@@ -1777,6 +1933,9 @@ launch_uefn() {
 
     "${final_cmd[@]}" &
     local proton_pid=$!
+
+    # Apply the game window icon (icon.png) once UEFN's window appears.
+    apply_uefn_window_icon &
 
     # Check and set CPU limit based on current user
     local current_user="${USER:-$(whoami)}"
