@@ -716,9 +716,10 @@ memory_menu() {
         echo "1) Show status + recommendation"
         echo "2) Set up ZRAM swap (25-80% of RAM, ZSTD)"
         echo "3) Disable ZRAM swap"
-        echo "4) Back to main menu"
+        echo "4) Auto-setup (livecd machine: 15G zram + 50G USB swap)"
+        echo "5) Back to main menu"
         echo
-        read -r -p "Select an option [1-4]: " mm || true
+        read -r -p "Select an option [1-5]: " mm || true
         case "$mm" in
             1) echo; memory_status; read -r -p "Press Enter to continue...";;
             2)
@@ -735,7 +736,8 @@ memory_menu() {
                 read -r -p "Press Enter to continue..."
                 ;;
             3) echo; zram_teardown; read -r -p "Press Enter to continue...";;
-            4) return 0;;
+            4) echo; ensure_livecd_memory; read -r -p "Press Enter to continue...";;
+            5) return 0;;
             *) warn "Invalid selection."; sleep 1;;
         esac
     done
@@ -752,6 +754,72 @@ memory_recommendation() {
     warn "You have less than 32GB of RAM ($((ram_mib/1024)) GiB)."
     echo "  Consider ZRAM (menu option 5) or a 10-30GB disk swapfile."
     echo
+}
+
+# Machine-specific auto-setup for the author's LiveCD box (user 'livecd', ~23-24
+# GiB of RAM). Ensures the preferred swap setup on that machine:
+#   * 15G ZSTD-compressed ZRAM swap (zram0)
+#   * a 50G USB swapfile at /mnt/usb/swapfile (USB auto-mounted if needed)
+# On any other machine, or when the setup is already present, this is a no-op.
+ensure_livecd_memory() {
+    [[ "$(whoami 2>/dev/null)" == "livecd" ]] || return 0
+
+    local ram_mib
+    ram_mib="$(total_ram_mib)"
+    # Roughly 23-24 GiB (this machine); be a little tolerant of size reports.
+    (( ram_mib >= 22528 && ram_mib <= 26624 )) || return 0
+
+    # --- ZRAM: 15G, zstd, priority 100 ---
+    if [[ -z "$(existing_zram_swap)" ]]; then
+        info "Setting up 15G ZRAM swap (livecd machine)..."
+        if have_sudo; then
+            sudo modprobe zram
+            sudo zramctl --find --size 15G --algorithm zstd
+            sudo mkswap /dev/zram0 >/dev/null
+            sudo swapon --priority 100 /dev/zram0
+            success "ZRAM swap enabled (/dev/zram0, 15G, zstd)."
+        else
+            warn "sudo is required to set up ZRAM."
+        fi
+    fi
+
+    # --- USB swapfile: 50G at /mnt/usb/swapfile ---
+    # Auto-mount the USB if it is not already at /mnt/usb.
+    if ! mountpoint -q /mnt/usb 2>/dev/null; then
+        info "Mounting USB to /mnt/usb..."
+        if have_sudo && [[ -b /dev/sdc2 ]]; then
+            sudo mkdir -p /mnt/usb
+            sudo mount /dev/sdc2 /mnt/usb || warn "Could not mount /dev/sdc2 to /mnt/usb."
+        else
+            warn "Cannot auto-mount /mnt/usb (missing sudo or device)."
+        fi
+    fi
+
+    if [[ -d /mnt/usb ]]; then
+        local sf="/mnt/usb/swapfile"
+        if [[ ! -f "$sf" ]]; then
+            info "Creating 50G swapfile at $sf..."
+            if have_sudo; then
+                sudo fallocate -l 50G "$sf"
+                sudo chmod 600 "$sf"
+                sudo mkswap "$sf" >/dev/null
+                sudo swapon "$sf"
+                success "USB swapfile enabled (50G)."
+            else
+                warn "sudo is required to create the USB swapfile."
+            fi
+        elif ! sudo swapon --show --noheadings 2>/dev/null | grep -q "$sf"; then
+            info "Enabling existing swapfile $sf..."
+            if have_sudo; then
+                sudo swapon "$sf"
+                success "USB swapfile enabled (50G)."
+            else
+                warn "sudo is required to enable the USB swapfile."
+            fi
+        fi
+    else
+        warn "/mnt/usb is not available; skipping 50G USB swapfile."
+    fi
 }
 
 ###############################################################################
@@ -1046,6 +1114,7 @@ install_games() {
     choose_base_dir
 
     memory_recommendation
+    ensure_livecd_memory
 
     local fortnite="$BASE_DIR/Fortnite"
     local uefn="$BASE_DIR/UEFN"
@@ -1486,6 +1555,7 @@ launch_uefn() {
     choose_base_dir
 
     memory_recommendation
+    ensure_livecd_memory
 
     ensure_auth
 
@@ -1743,11 +1813,17 @@ case "${1:-}" in
     memory)
         memory_status
         ;;
+    livecd-memory)
+        ensure_livecd_memory
+        ;;
     zram)
         zram_setup "${2:-25}"
         ;;
     zram-off)
         zram_teardown
+        ;;
+    livecd-memory)
+        ensure_livecd_memory
         ;;
     "")
         main_menu
@@ -1764,6 +1840,7 @@ case "${1:-}" in
         echo "  $0 memory         Show memory + swap status and recommendation"
         echo "  $0 zram [PCT]     Set up ZRAM swap (default 25% of RAM)"
         echo "  $0 zram-off       Disable ZRAM swap"
+        echo "  $0 livecd-memory  Auto-setup (15G zram + 50G USB swap)"
         exit 1
         ;;
 esac
