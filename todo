@@ -1,6 +1,6 @@
 - [x] check for updates and hash check legondary (install if not in path or next to the install file) - Latest release https://github.com/Heroic-Games-Launcher/legendary/releases/tag/0.20.43
-- A menu that lets the user use ~20-80% of RAM as ZRAM with ZSTD compression (On my system with 24GB of RAM, having 8GB of RAM be ztsd ZRAM worked very well.
-- Recomend thhe user to have a RAM disk if they have less than 32GB of RAM.
+- [x] A menu that lets the user use ~20-80% of RAM as ZRAM with ZSTD compression (On my system with 24GB of RAM, having 8GB of RAM be ztsd ZRAM worked very well.
+- [x] Recomend thhe user to have a RAM disk if they have less than 32GB of RAM.
 - [x] Move this repo to git
 
 

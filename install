@@ -503,6 +503,258 @@ version_pad() {
 }
 
 ###############################################################################
+# Memory: ZRAM + swap recommendations
+###############################################################################
+
+# Total physical RAM in MiB (best effort; falls back to 0). /proc/meminfo is
+# in kB, so the raw value is converted to MiB.
+total_ram_mib() {
+    local kb
+    kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null)" || return 0
+    (( kb > 0 )) && awk -v k="$kb" 'BEGIN{printf "%d", k/1024}'
+}
+
+total_swap_mib() {
+    local kb
+    kb="$(awk '/^SwapTotal:/{print $2}' /proc/meminfo 2>/dev/null)" || return 0
+    (( kb > 0 )) && awk -v k="$kb" 'BEGIN{printf "%d", k/1024}'
+}
+
+# Detect an existing zram swap device in use (e.g. /dev/zram0). Prints the
+# device name if found, else empty.
+existing_zram_swap() {
+    command -v swapon >/dev/null 2>&1 || return 0
+    swapon --show --noheadings 2>/dev/null | awk '$1 ~ /^\/dev\/zram[0-9]+$/ {print $1; exit}'
+}
+
+# True (0) if sudo is present, else 1. (An actual sudo call may prompt for a
+# password; we defer that to the real operation.)
+have_sudo() {
+    command -v sudo >/dev/null 2>&1
+}
+
+# Show current memory situation and ZRAM/swap recommendations.
+memory_status() {
+    local ram_mib swap_mib
+    ram_mib="$(total_ram_mib)"
+    swap_mib="$(total_swap_mib)"
+    local ram_g swap_g
+    ram_g="$(awk -v m="$ram_mib" 'BEGIN{printf "%.1f", m/1024}')"
+    swap_g="$(awk -v m="$swap_mib" 'BEGIN{printf "%.1f", m/1024}')"
+
+    echo "========================================="
+    echo " Memory & Swap"
+    echo "========================================="
+    echo
+    echo "RAM:          $ram_mib MiB ($ram_g GiB)"
+    echo "Swap total:   $swap_mib MiB ($swap_g GiB)"
+    echo
+    echo "Swap devices:"
+    local line
+    if command -v swapon >/dev/null 2>&1 && output="$(swapon --show 2>&1)"; then
+        echo "$output" | while IFS= read -r line; do
+            echo "  $line"
+        done
+    else
+        echo "  (none)"
+    fi
+    echo
+
+    local zram_dev
+    zram_dev="$(existing_zram_swap)"
+    if [[ -n "$zram_dev" ]]; then
+        success "ZRAM swap is active ($zram_dev)."
+        echo
+        local zsize
+        zsize="$(zramctl -o NAME,DISKSIZE,DATA,COMPR,ALGORITHM 2>/dev/null | awk '$1 ~ /^\/dev\/zram/ {print; exit}')"
+        [[ -n "$zsize" ]] && echo "  $zsize"
+    else
+        warn "No ZRAM swap configured."
+    fi
+    echo
+
+    # Recommendation based on the presence of an existing zram solution.
+    if [[ -z "$zram_dev" ]]; then
+        echo "Recommendation:"
+        if (( ram_mib < 32768 )); then
+            echo "  You have less than 32GB of RAM. A RAM disk / swap can help."
+            echo "  Use ZRAM (compressed in-RAM swap) or a disk swapfile:"
+            echo "    - ZRAM: 25-80% of RAM, ZSTD compression (see menu option)."
+            echo "    - Swap: 10-30GB disk swapfile if you also need fallback."
+            recommend_zram_choices
+        else
+            echo "  You have >= 32GB of RAM; ZRAM is optional."
+            echo "  Configure ZRAM via this menu if you want compressed swap."
+        fi
+    else
+        echo "ZRAM is already set up; leaving it as-is."
+    fi
+    echo
+}
+
+# Print the suggested ZRAM percents for guidance.
+recommend_zram_choices() {
+    local ram_mib
+    ram_mib="$(total_ram_mib)"
+    local low high
+    low="$(awk -v m="$ram_mib" 'BEGIN{printf "%.1f", m*0.25/1024}')"
+    high="$(awk -v m="$ram_mib" 'BEGIN{printf "%.1f", m*0.80/1024}')"
+    echo "  Suggested ZRAM size: $low - $high GiB (25-80% of $((ram_mib/1024)) GiB RAM)."
+}
+
+# Configure ZRAM as swap with ZSTD compression. $1 = percent of RAM (20-80),
+# default CLI arg. Does NOT touch an existing zram swap.
+zram_setup() {
+    local percent="${1:-25}"
+    local ram_mib
+    ram_mib="$(total_ram_mib)"
+    if (( ram_mib <= 0 )); then
+        error "Could not determine total RAM."
+        return 1
+    fi
+
+    # Refuse to clobber an existing zram swap on OTHER systems too, matching
+    # the "keep existing solution" behaviour.
+    local existing
+    if existing="$(existing_zram_swap)"; then
+        success "ZRAM swap already active ($existing). Not modifying it."
+        return 0
+    fi
+
+    if ! have_sudo; then
+        error "Root is required to set up ZRAM (sudo) but is not available."
+        return 1
+    fi
+
+    # Clamp percent to [20,80].
+    if (( percent < 20 )); then percent=20; fi
+    if (( percent > 80 )); then percent=80; fi
+
+    local size_mib
+    size_mib="$(awk -v m="$ram_mib" -v p="$percent" 'BEGIN{printf "%d", m*p/100}')"
+    local size_bytes
+    size_bytes="$(( size_mib * 1024 * 1024 ))"
+
+    echo "Setting up ZRAM (${percent}% = ${size_mib} MiB) with ZSTD compression..."
+    echo
+
+    # Load module.
+    sudo modprobe zram || { error "Failed to load zram module."; return 1; }
+
+    # Create the zram device config inside a single root shell so all the
+    # /sys writes are consistent. Prefer /dev/zram0 when it is not already in
+    # use as swap; otherwise hot-add a fresh device.
+    local result
+    result="$(sudo bash -s -- "$size_bytes" <<'ROOTSH'
+set -e
+size_bytes="$1"
+
+# Find a free zram device.
+if [[ ! -e /dev/zram0 ]] || ! swapon --show --noheadings 2>/dev/null | grep -q '^/dev/zram0 '; then
+    DEV=/dev/zram0
+else
+    NUM=$(cat /sys/class/zram-control/hot_add 2>/dev/null || echo 1)
+    DEV=/dev/zram${NUM}
+fi
+
+# Reset any prior config on this device, then set size + zstd.
+if [[ -e /sys/block/${DEV#/dev}/reset ]]; then
+    echo 1 > /sys/block/${DEV#/dev}/reset
+fi
+if [[ -e /sys/block/${DEV#/dev}/comp_algorithm ]]; then
+    echo zstd > /sys/block/${DEV#/dev}/comp_algorithm
+fi
+echo "$size_bytes" > /sys/block/${DEV#/dev}/disksize
+
+mkswap "$DEV" >/dev/null
+swapon "$DEV" -p 100
+printf '%s' "$DEV"
+ROOTSH
+)" || { error "Failed to set up ZRAM."; return 1; }
+
+    echo
+    success "ZRAM swap enabled: $result (${size_mib} MiB, zstd, priority 100)."
+    echo
+    free -h
+}
+
+# Tear down ZRAM swap that this script (or any) configured. Requires sudo.
+zram_teardown() {
+    local dev
+    if ! dev="$(existing_zram_swap)"; then
+        info "No ZRAM swap to disable."
+        return 0
+    fi
+
+    if ! have_sudo; then
+        error "Root is required to disable ZRAM (sudo) but is not available."
+        return 1
+    fi
+
+    read -r -p "Disable ZRAM swap device $dev? [y/N] " ans
+    ans="${ans:-N}"
+    if [[ ! "$ans" =~ ^[Yy]$ ]]; then
+        echo "Cancelled."
+        return 0
+    fi
+
+    sudo swapoff "$dev" || { error "swapoff failed."; return 1; }
+    local num="${dev#/dev/zram}"
+    if [[ -e /sys/class/zram-control/hot_remove ]]; then
+        sudo bash -c "echo $num > /sys/class/zram-control/hot_remove" 2>/dev/null || true
+    fi
+    success "ZRAM swap disabled ($dev)."
+}
+
+# Interactive menu for memory/ZRAM configuration.
+memory_menu() {
+    while true; do
+        clear
+        echo "========================================="
+        echo " Memory / Swap"
+        echo "========================================="
+        echo "1) Show status + recommendation"
+        echo "2) Set up ZRAM swap (25-80% of RAM, ZSTD)"
+        echo "3) Disable ZRAM swap"
+        echo "4) Back to main menu"
+        echo
+        read -r -p "Select an option [1-4]: " mm || true
+        case "$mm" in
+            1) echo; memory_status; read -r -p "Press Enter to continue...";;
+            2)
+                echo
+                recommend_zram_choices
+                echo
+                read -r -p "ZRAM percent of RAM (20-80, default 25): " pct
+                pct="${pct:-25}"
+                if [[ "$pct" =~ ^[0-9]+$ ]]; then
+                    zram_setup "$pct"
+                else
+                    error "Invalid percent."
+                fi
+                read -r -p "Press Enter to continue..."
+                ;;
+            3) echo; zram_teardown; read -r -p "Press Enter to continue...";;
+            4) return 0;;
+            *) warn "Invalid selection."; sleep 1;;
+        esac
+    done
+}
+
+# Optional banner shown at install/launch time: reminds users with < 32GB of
+# RAM about ZRAM / a disk swap. No-op otherwise.
+memory_recommendation() {
+    local ram_mib
+    ram_mib="$(total_ram_mib)"
+    (( ram_mib < 32768 )) || return 0
+
+    echo
+    warn "You have less than 32GB of RAM ($((ram_mib/1024)) GiB)."
+    echo "  Consider ZRAM (menu option 5) or a 10-30GB disk swapfile."
+    echo
+}
+
+###############################################################################
 # Installation directory
 ###############################################################################
 
@@ -792,6 +1044,8 @@ except:
 
 install_games() {
     choose_base_dir
+
+    memory_recommendation
 
     local fortnite="$BASE_DIR/Fortnite"
     local uefn="$BASE_DIR/UEFN"
@@ -1230,6 +1484,9 @@ PYEOF
 
 launch_uefn() {
     choose_base_dir
+
+    memory_recommendation
+
     ensure_auth
 
     # Check for game updates and update automatically before launching
@@ -1399,14 +1656,15 @@ main_menu() {
         echo "2) Launch UEFN (Checks for updates first)"
         echo "3) Find Proton"
         echo "4) Install VS Code + Verse plugin"
-        echo "5) Check legendary"
-        echo "6) Edit launch options"
-        echo "7) Exit"
+        echo "5) Memory / Swap (ZRAM)"
+        echo "6) Check legendary"
+        echo "7) Edit launch options"
+        echo "8) Exit"
         echo
         echo "Launch options file:"
         echo "  $LAUNCH_OPTIONS_FILE"
 
-        read -r -p "Select an option [1-7]: " choice || true
+        read -r -p "Select an option [1-8]: " choice || true
 
         case "$choice" in
             1)
@@ -1436,16 +1694,19 @@ main_menu() {
                 read -r -p "Press Enter to continue..."
                 ;;
             5)
+                memory_menu
+                ;;
+            6)
                 echo
                 legendary_status
                 read -r -p "Press Enter to continue..."
                 ;;
-            6)
+            7)
                 echo
                 edit_launch_options
                 read -r -p "Press Enter to continue..."
                 ;;
-            7)
+            8)
                 exit 0
                 ;;
             *)
@@ -1479,6 +1740,15 @@ case "${1:-}" in
     legendary)
         legendary_status
         ;;
+    memory)
+        memory_status
+        ;;
+    zram)
+        zram_setup "${2:-25}"
+        ;;
+    zram-off)
+        zram_teardown
+        ;;
     "")
         main_menu
         ;;
@@ -1491,6 +1761,9 @@ case "${1:-}" in
         echo "  $0 vscode         Install VS Code + Verse plugin into the prefix"
         echo "  $0 launch-options Edit the launch options file"
         echo "  $0 legendary      Check legendary version/hash status"
+        echo "  $0 memory         Show memory + swap status and recommendation"
+        echo "  $0 zram [PCT]     Set up ZRAM swap (default 25% of RAM)"
+        echo "  $0 zram-off       Disable ZRAM swap"
         exit 1
         ;;
 esac
