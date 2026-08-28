@@ -1,0 +1,10 @@
+# Downloaded tool (fetched separately with hash check)
+legendary_linux_x86_64
+
+# Logs / monitoring output
+*.log
+log_ram_console.log
+ram_usage_*.csv
+
+# Editor/backup files
+*~
