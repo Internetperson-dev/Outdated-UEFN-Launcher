@@ -724,14 +724,18 @@ memory_menu() {
             1) echo; memory_status; read -r -p "Press Enter to continue...";;
             2)
                 echo
-                recommend_zram_choices
-                echo
-                read -r -p "ZRAM percent of RAM (20-80, default 25): " pct
-                pct="${pct:-25}"
-                if [[ "$pct" =~ ^[0-9]+$ ]]; then
-                    zram_setup "$pct"
+                if [[ "$(whoami 2>/dev/null)" == "livecd" ]]; then
+                    ensure_livecd_memory
                 else
-                    error "Invalid percent."
+                    recommend_zram_choices
+                    echo
+                    read -r -p "ZRAM percent of RAM (20-80, default 25): " pct
+                    pct="${pct:-25}"
+                    if [[ "$pct" =~ ^[0-9]+$ ]]; then
+                        zram_setup "$pct"
+                    else
+                        error "Invalid percent."
+                    fi
                 fi
                 read -r -p "Press Enter to continue..."
                 ;;
@@ -774,8 +778,9 @@ ensure_livecd_memory() {
         info "Setting up 15G ZRAM swap (livecd machine)..."
         if have_sudo; then
             sudo modprobe zram
+	    sudo zramctl --reset /dev/zram0
             sudo zramctl --find --size 15G --algorithm zstd
-            sudo mkswap /dev/zram0 >/dev/null
+            sudo mkswap /dev/zram0
             sudo swapon --priority 100 /dev/zram0
             success "ZRAM swap enabled (/dev/zram0, 15G, zstd)."
         else
