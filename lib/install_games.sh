@@ -41,7 +41,7 @@ install_games() {
     info "Installing Fortnite core files..."
     echo
 
-    "$LEGENDARY" install Fortnite \
+    "$LEGENDARY" -y install Fortnite \
         --base-path "$fortnite" \
         --skip-dlcs
 
@@ -52,7 +52,7 @@ install_games() {
     info "Installing UEFN..."
     echo
 
-    "$LEGENDARY" install Fortnite_Studio \
+    "$LEGENDARY" -y install Fortnite_Studio \
         --base-path "$uefn"
 
     echo

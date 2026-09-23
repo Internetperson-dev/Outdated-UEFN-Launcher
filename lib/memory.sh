@@ -22,6 +22,15 @@ existing_zram_swap() {
     swapon --show --noheadings 2>/dev/null | awk '$1 ~ /^\/dev\/zram[0-9]+$/ {print $1; exit}'
 }
 
+existing_zram_size_kib() {
+    local dev
+    dev="$(existing_zram_swap)" || return 0
+    [[ -n "$dev" ]] || return 0
+    local disksize
+    disksize="$(cat "/sys/block/${dev#/dev/}/disksize" 2>/dev/null)" || return 0
+    awk -v d="$disksize" 'BEGIN{printf "%d", d/1024}'
+}
+
 have_sudo() {
     command -v sudo >/dev/null 2>&1
 }
@@ -203,15 +212,27 @@ ensure_livecd_memory() {
     ram_mib="$(total_ram_mib)"
     (( ram_mib >= 22528 && ram_mib <= 26624 )) || return 0
 
-    if [[ -z "$(existing_zram_swap)" ]]; then
-        info "Setting up 15G ZRAM swap (livecd machine)..."
+    local existing_dev cur_size target_kib=15728640
+    existing_dev="$(existing_zram_swap)"
+    cur_size="$(existing_zram_size_kib)"
+
+    if [[ -z "$existing_dev" ]] || (( cur_size < target_kib - 1024 || cur_size > target_kib + 1024 )); then
         if have_sudo; then
+            if [[ -n "$existing_dev" ]]; then
+                info "Existing ZRAM is ${cur_size} KiB, resizing to 15G..."
+                sudo swapoff "$existing_dev" 2>/dev/null || true
+                local num="${existing_dev#/dev/zram}"
+                if [[ -e /sys/class/zram-control/hot_remove ]]; then
+                    sudo bash -c "echo $num > /sys/class/zram-control/hot_remove" 2>/dev/null || true
+                fi
+            fi
+            info "Setting up 15G ZRAM swap (livecd machine)..."
             sudo modprobe zram
-	    sudo zramctl --reset /dev/zram0
-            sudo zramctl --find --size 15G --algorithm zstd
-            sudo mkswap /dev/zram0
-            sudo swapon --priority 100 /dev/zram0
-            success "ZRAM swap enabled (/dev/zram0, 15G, zstd)."
+            local new_dev
+            new_dev="$(sudo zramctl --find --size 15G --algorithm zstd)"
+            sudo mkswap "$new_dev"
+            sudo swapon --priority 100 "$new_dev"
+            success "ZRAM swap enabled ($new_dev, 15G, zstd)."
         else
             warn "sudo is required to set up ZRAM."
         fi

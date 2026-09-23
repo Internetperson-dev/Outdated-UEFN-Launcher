@@ -55,7 +55,7 @@ download_legendary() {
     local url="$1" expected="$2"
     local tmp
     tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' RETURN
+    trap 'rm -f "${tmp:-}"' RETURN
 
     info "Downloading legendary ($LEGENDARY_ASSET)..."
     if ! curl -fsSL --connect-timeout 10 --max-time 300 -o "$tmp" "$url"; then
@@ -206,53 +206,32 @@ check_and_update_apps() {
 
     ensure_legendary || exit 1
 
-    local json_output
-    json_output="$("$LEGENDARY" list-installed --check-updates --json 2>/dev/null || true)"
+    local csv_output
+    csv_output="$("$LEGENDARY" list-installed --check-updates --csv 2>/dev/null || true)"
 
-    if [[ -z "$json_output" ]]; then
+    if [[ -z "$csv_output" ]]; then
         warn "Could not fetch installed games status from Legendary. Skipping update check."
         return
     fi
 
-    local fortnite_needs_update
-    fortnite_needs_update="$(python3 -c '
-import json, sys
-try:
-    data = json.loads(sys.stdin.read())
-    for app in data:
-        if app.get("app_name") == "Fortnite" and app.get("needs_update"):
-            print("true")
-            break
-except:
-    pass
-' <<< "$json_output")"
+    check_and_update_app "$csv_output" "Fortnite" "Fortnite"
+    check_and_update_app "$csv_output" "Fortnite_Studio" "UEFN"
+}
 
-    if [[ "$fortnite_needs_update" == "true" ]]; then
-        info "An update is available for Fortnite. Updating..."
-        "$LEGENDARY" install Fortnite --update-only
-        success "Fortnite updated successfully."
+check_and_update_app() {
+    local csv="$1" app_name="$2" label="$3" needs_update
+    needs_update="$(awk -F, -v app="$app_name" '
+        NR > 1 && $1 == app { print $5 }
+    ' <<<"$csv")"
+
+    if [[ "$needs_update" == "True" ]]; then
+        info "An update is available for $label. Updating..."
+        if "$LEGENDARY" -y install "$app_name" --update-only; then
+            success "$label updated successfully."
+        else
+            warn "$label update failed; check the log above."
+        fi
     else
-        info "Fortnite is up to date."
-    fi
-
-    local uefn_needs_update
-    uefn_needs_update="$(python3 -c '
-import json, sys
-try:
-    data = json.loads(sys.stdin.read())
-    for app in data:
-        if app.get("app_name") == "Fortnite_Studio" and app.get("needs_update"):
-            print("true")
-            break
-except:
-    pass
-' <<< "$json_output")"
-
-    if [[ "$uefn_needs_update" == "true" ]]; then
-        info "An update is available for UEFN (Fortnite_Studio). Updating..."
-        "$LEGENDARY" install Fortnite_Studio --update-only
-        success "UEFN updated successfully."
-    else
-        info "UEFN is up to date."
+        info "$label is up to date."
     fi
 }

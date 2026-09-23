@@ -2,5 +2,4 @@
 
 - Shim to make the verse button work in linux vscode in proton UEFN fortnite
 - Documatation explaining how to use the tool (Cannot use pc, have to use remote device)
-- Move to lore for my UEFN project
-- Break up code base into serveral files
+- See if Lore-GUI works. See if https://www.anchorpoint.app/ later linux version works better. (I would prefer to use a foss solution)

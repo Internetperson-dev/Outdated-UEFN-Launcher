@@ -33,6 +33,7 @@ main_menu() {
                 ;;
             2)
                 launch_uefn
+                # ensure_livecd_memory
                 ;;
             3)
                 echo
