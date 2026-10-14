@@ -2,11 +2,18 @@
 # launcher.sh — Full UEFN launch orchestration.
 
 launch_uefn() {
-    choose_base_dir
+    choose_base_dir || {
+        echo
+        error "Cannot continue without a usable install directory."
+        return 1
+    }
 
     memory_recommendation
     ensure_livecd_memory
 
+    # Keep legendary current and sign in before the game update check, which
+    # both need working credentials.
+    ensure_legendary
     ensure_auth
     check_and_update_apps
 
@@ -15,7 +22,7 @@ launch_uefn() {
         error "No Proton installation could be found."
         echo
         echo "Install Proton through Steam first."
-        exit 1
+        return 1
     fi
 
     local prefix
@@ -24,6 +31,12 @@ launch_uefn() {
         cfg_set proton_prefix "$prefix"
     fi
     local fake_steam="$prefix/fake-steam"
+
+    if [[ ! -d "$prefix" ]] && path_would_shadow_mount "$prefix"; then
+        error "Refusing to create the Proton prefix at $prefix."
+        note "That path looks like an unmounted drive. Mount it and try again."
+        return 1
+    fi
 
     mkdir -p "$prefix" "$fake_steam"
 

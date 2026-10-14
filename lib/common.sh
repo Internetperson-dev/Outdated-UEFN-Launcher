@@ -13,6 +13,9 @@ set -euo pipefail
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 LEGENDARY="$REPO_ROOT/legendary_linux_x86_64"
 
+# How the user invoked us, for help/error text.
+SELF_NAME="${SELF_NAME:-$(basename -- "${0}")}"
+
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/uefn-installer"
 CONFIG_FILE="$CONFIG_DIR/config"
 LAUNCH_OPTIONS_FILE="$CONFIG_DIR/launch-options"
@@ -34,6 +37,49 @@ info()    { echo -e "${BLUE}[INFO]${RESET} $*"; }
 success() { echo -e "${GREEN}[OK]${RESET} $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${RESET} $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+
+# Plain output used inside aligned/boxed messages, so the colour codes do not
+# end up in the middle of an indented block.
+note()    { echo "       $*"; }
+head2()   { echo; echo "-----------------------------------------"; echo; }
+
+# True when stdin is a terminal we can actually prompt on.  Every automated
+# step (update checks, status probes) must stay silent when this is false.
+is_interactive() { [[ -t 0 ]]; }
+
+# Press Enter to continue.  A no-op when there is no terminal (cron, desktop
+# launcher, piped invocation) so nothing ever blocks waiting for a keypress.
+pause() {
+    is_interactive || return 0
+    read -r -p "Press Enter to continue..." _ || true
+}
+
+# Yes/no question.  Returns 0 for yes.  $2 is the default (y|n).
+confirm() {
+    local prompt="$1" default="${2:-y}" answer suffix
+    if ! is_interactive; then
+        [[ "$default" == "y" ]]
+        return
+    fi
+    suffix="[y/N]"
+    [[ "$default" == "y" ]] && suffix="[Y/n]"
+    read -r -p "$prompt $suffix " answer || answer="$default"
+    answer="${answer:-$default}"
+    [[ "$answer" =~ ^[Yy]$ ]]
+}
+
+# Human readable byte count, used by the installed-games listing.
+human_size() {
+    local b="${1:-0}"
+    [[ "$b" =~ ^[0-9]+$ ]] || { echo "?"; return 0; }
+    local -a units=(B KiB MiB GiB TiB)
+    local i=0
+    while (( b >= 1024 && i < 4 )); do
+        b=$(( b / 1024 ))
+        (( i++ ))
+    done
+    printf '%d %s' "$b" "${units[i]}"
+}
 
 ###############################################################################
 # Config helpers (key=value flat file)

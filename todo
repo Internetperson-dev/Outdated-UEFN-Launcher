@@ -1,5 +1,140 @@
+FIX
+
+
+Automatic MCP support (Enable MCP and Pythonn support in project than add MCP for Claude Code and Opencode ( see .config/opencode/opencode.json  )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Makei a better swap setup. ZRAM, and swap on fortnite install drive. (You should need ~32-64GB of RAM)
+
+
+Repair should do
+
+./legendary_linux_x86_64 import Fortnite [Path]
+
+
+(As well as Fortnite_Studio)
+
+=========================================
+ Fortnite / UEFN Linux Installer
+=========================================
+
+1) Install Fortnite + UEFN
+2) Launch UEFN (checks for updates first)
+3) Find Proton
+4) VS Code (Linux): install plugins
+5) VS Code (Linux): launch
+6) VS Code (Windows/Proton): install
+7) VS Code (Windows/Proton): launch
+8) Memory / Swap (ZRAM)
+9) Check legendary
+10) Edit launch options
+11) Update legendary + installed games
+12) Repair Fortnite / UEFN installation
+13) Sign in to Epic Games
+14) Check saved paths / drives
+15) Exit
+
+Launch options file:
+  /home/ram/.config/uefn-installer/launch-options
+Select an option [1-15]: 1
+
+[WARN] You have less than 32GB of RAM (23 GiB).
+  Consider ZRAM (menu option 5) or a 10-30GB disk swapfile.
+
+
+=========================================
+ Installation
+=========================================
+
+Fortnite:
+  /run/media/ram/lubuntu_2404/home/ram/UEFN/Fortnite
+
+UEFN:
+  /run/media/ram/lubuntu_2404/home/ram/UEFN/UEFN
+
+Only the required Fortnite data will be installed.
+HD textures and optional packs will NOT be installed.
+
+Continue? [Y/n] y
+[OK] Signed in to Epic Games as Rameez 10.
+
+[INFO] Installing Fortnite core files...
+
+[cli] CRITICAL: Failed to acquire installed data lock, only one instance of Legendary may install/import/move applications at a time.
+
+[OK] Fortnite installation complete.
+
+[INFO] Installing UEFN...
+
+[cli] CRITICAL: Failed to acquire installed data lock, only one instance of Legendary may install/import/move applications at a time.
+
+[OK] UEFN installation complete.
+
+=========================================
+ Installation complete
+=========================================
+
+Fortnite:
+  /run/media/ram/lubuntu_2404/home/ram/UEFN/Fortnite
+
+UEFN:
+  /run/media/ram/lubuntu_2404/home/ram/UEFN/UEFN
+
+Press Enter to continue...
+
+
+
+
+
+
+
+# Features
+
+- [x] Warn user if path that once existed no longer works (they likely forgot to mount a drive)
+      -> lib/paths.sh; warns on menu start, `install paths`, and before install/launch/repair.
+      -> Refuses to mkdir over a missing mount point (that would shadow the drive).
+      -> Offers to wait for the drive and resumes the launch automatically.
+- [x] Fix update code and always check and auto update on every launch
+      -> legendary repo/assets were wrong (Heroic-Games-Launcher -> legendary-gl,
+         legendary_linux_x86_64 -> legendary_linux_x64), so it never updated past 0.20.43.
+      -> `legendary status` exits 0 even when logged out, so the auth check was a no-op.
+      -> Every legendary call runs with `-y`, `</dev/null` and a timeout: no keypress waits.
+      -> `install update`, menu 11, and every launch run the check.
+- [x] Auto update the legendary binary
+      -> Checked on every launch, rate limited to once per 6h to stay under GitHub's
+         anonymous rate limit; `install legendary` / menu 9 forces an immediate check.
+- [x] Prompt the user to login if not logged in
+      -> Detected via `status --offline --json`; expired sessions are caught too.
+- [x] List installed games and check for updates (`legendary list-installed --check-updates`)
+      -> `install games`, menu 9. Shows version/size/path and flags missing folders.
+- [x] Repair Fortnite / UEFN installation
+      -> Menu 12, `install repair`, `install repair-update`.
+      -> Refuses to run when the install folder is missing (would re-download 20+ GB).
+
+# Notes
+
+- `install repair` verifies ~20k shader files and can take a long while; it streams
+  output so progress is visible. Run it, do not kill it halfway.
+- Game install/update targets: `Fortnite` -> $BASE_DIR/Fortnite, `Fortnite_Studio` (UEFN)
+  -> $BASE_DIR/UEFN.
+
 # Manually needs to be look into by a human
 
 - Shim to make the verse button work in linux vscode in proton UEFN fortnite
 - Documatation explaining how to use the tool (Cannot use pc, have to use remote device)
 - See if Lore-GUI works. See if https://www.anchorpoint.app/ later linux version works better. (I would prefer to use a foss solution)
+- Wait and see  if CRAM is better than ZRAM + Swap Drive/USB - https://www.phoronix.com/news/Linux-CRAM-Compressed-RAM
+- https://www.phoronix.com/news/Linux-ZRAM-Rework-Savings !? 

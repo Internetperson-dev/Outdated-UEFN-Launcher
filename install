@@ -2,11 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+SELF_NAME="$(basename -- "${BASH_SOURCE[0]}")"
 
 # Source shared helpers first (colours, config, version comparison, paths)
 # then every feature module.  Each lib/*.sh file is self-contained but relies
 # on the variables and helpers exported by common.sh.
 source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/paths.sh"
 source "$SCRIPT_DIR/lib/launch_options.sh"
 source "$SCRIPT_DIR/lib/legendary.sh"
 source "$SCRIPT_DIR/lib/memory.sh"
@@ -56,6 +58,27 @@ case "${1:-}" in
     launch-options)
         edit_launch_options
         ;;
+    repair|repair-update)
+        repair_games "$([[ "$1" == "repair-update" ]] && echo update || echo repair)"
+        ;;
+    login)
+        ensure_legendary || exit 1
+        legendary_login "${2:-}"
+        ;;
+    update)
+        ensure_legendary force || true
+        check_and_update_apps
+        ;;
+    games)
+        ensure_legendary || exit 1
+        if [[ "$(legendary_auth_state)" != "stored" ]]; then
+            warn "Not signed in to Epic Games; update check will be skipped."
+        fi
+        legendary_print_installed
+        ;;
+    paths)
+        paths_status
+        ;;
     legendary)
         legendary_status
         ;;
@@ -79,6 +102,12 @@ case "${1:-}" in
         echo "  $0                Interactive menu"
         echo "  $0 install        Install Fortnite + UEFN"
         echo "  $0 launch         Check updates and launch UEFN"
+        echo "  $0 update         Update legendary + installed games (no prompts)"
+        echo "  $0 games          List installed games and show update state"
+        echo "  $0 login [CODE]   Sign in to Epic Games (CODE optional)"
+        echo "  $0 repair         Verify Fortnite/UEFN files, re-download broken ones"
+        echo "  $0 repair-update  Repair + update to the latest build"
+        echo "  $0 paths          Check saved paths / mounted drives"
         echo "  $0 proton         Print detected Proton"
         echo "  $0 vscode-linux-install  Install Verse plugin into Linux VS Code"
         echo "  $0 vscode-linux-launch   Launch Linux VS Code"

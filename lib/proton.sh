@@ -10,6 +10,10 @@ find_proton() {
     if cached="$(cfg_get proton_path)" && [[ -x "$cached" ]]; then
         echo "$cached"
         return 0
+    elif [[ -n "$cached" ]]; then
+        # Steam library moved or the drive is not mounted: re-scan instead of
+        # trusting a path that no longer exists.
+        cfg_delete proton_path
     fi
 
     local tmpdir

@@ -8,13 +8,10 @@ find_uefn_exe() {
     if cached="$(cfg_get uefn_exe)" && [[ -f "$cached" ]]; then
         echo "$cached"
         return 0
-    fi
-
-    local known="/mnt/hdd/home/ram/UEFN/Fortnite/Fortnite/FortniteGame/Binaries/Win64/UnrealEditorFortnite-Win64-Shipping.exe"
-    if [[ -f "$known" ]]; then
-        cfg_set uefn_exe "$known"
-        echo "$known"
-        return 0
+    elif [[ -n "$cached" ]]; then
+        # Cached path is gone (unmounted drive, moved install). Forget it so we
+        # search again and stop warning about a directory that no longer exists.
+        cfg_delete uefn_exe
     fi
 
     local candidates=(

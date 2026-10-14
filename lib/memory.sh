@@ -308,7 +308,7 @@ memory_menu() {
         echo
         read -r -p "Select an option [1-5]: " mm || true
         case "$mm" in
-            1) echo; memory_status; read -r -p "Press Enter to continue...";;
+            1) echo; memory_status; pause ;;
             2)
                 echo
                 if [[ "$(whoami 2>/dev/null)" == "livecd" ]]; then
@@ -324,10 +324,10 @@ memory_menu() {
                         error "Invalid percent."
                     fi
                 fi
-                read -r -p "Press Enter to continue..."
+                pause
                 ;;
-            3) echo; zram_teardown; read -r -p "Press Enter to continue...";;
-            4) echo; ensure_livecd_memory; read -r -p "Press Enter to continue...";;
+            3) echo; zram_teardown; pause ;;
+            4) echo; ensure_livecd_memory; pause ;;
             5) return 0;;
             *) warn "Invalid selection."; sleep 1;;
         esac

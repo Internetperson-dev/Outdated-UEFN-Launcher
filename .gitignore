@@ -12,3 +12,5 @@ ram_usage_*.csv
 # Local asset (referenced by path; not part of the repo)
 icon.png
 .cache/
+
+*LoreGUI_Linux_x64

@@ -1,7 +1,23 @@
 #!/usr/bin/env bash
 # menu.sh — Interactive main menu.
 
+# Runs the startup housekeeping: warn about dead paths, refresh the legendary
+# binary, and sign in when needed.  Nothing here blocks on a prompt unless the
+# user genuinely has to act (sign-in).
+startup_checks() {
+    ensure_legendary || return 1
+
+    local base
+    base="$(saved_base_dir || true)"
+    if [[ -n "$base" ]] && [[ ! -d "$base" ]]; then
+        echo
+        check_saved_paths || true
+    fi
+}
+
 main_menu() {
+    startup_checks || true
+
     while true; do
         clear
 
@@ -10,7 +26,7 @@ main_menu() {
         echo "========================================="
         echo
         echo "1) Install Fortnite + UEFN"
-        echo "2) Launch UEFN (Checks for updates first)"
+        echo "2) Launch UEFN (checks for updates first)"
         echo "3) Find Proton"
         echo "4) VS Code (Linux): install plugins"
         echo "5) VS Code (Linux): launch"
@@ -19,21 +35,25 @@ main_menu() {
         echo "8) Memory / Swap (ZRAM)"
         echo "9) Check legendary"
         echo "10) Edit launch options"
-        echo "11) Exit"
+        echo "11) Update legendary + installed games"
+        echo "12) Repair Fortnite / UEFN installation"
+        echo "13) Sign in to Epic Games"
+        echo "14) Check saved paths / drives"
+        echo "15) Exit"
         echo
         echo "Launch options file:"
         echo "  $LAUNCH_OPTIONS_FILE"
 
-        read -r -p "Select an option [1-11]: " choice || true
+        local choice
+        read -r -p "Select an option [1-15]: " choice || true
 
         case "$choice" in
             1)
                 install_games
-                read -r -p "Press Enter to continue..."
+                pause
                 ;;
             2)
                 launch_uefn
-                # ensure_livecd_memory
                 ;;
             3)
                 echo
@@ -48,7 +68,7 @@ main_menu() {
                 fi
 
                 echo
-                read -r -p "Press Enter to continue..."
+                pause
                 ;;
             4)
                 choose_base_dir
@@ -58,11 +78,11 @@ main_menu() {
                 else
                     error "Could not find the VS Code install folder."
                 fi
-                read -r -p "Press Enter to continue..."
+                pause
                 ;;
             5)
                 launch_vscode_linux
-                read -r -p "Press Enter to continue..."
+                pause
                 ;;
             6)
                 choose_base_dir
@@ -72,11 +92,11 @@ main_menu() {
                 else
                     error "Could not find the VS Code install folder."
                 fi
-                read -r -p "Press Enter to continue..."
+                pause
                 ;;
             7)
                 launch_vscode_proton
-                read -r -p "Press Enter to continue..."
+                pause
                 ;;
             8)
                 memory_menu
@@ -84,14 +104,40 @@ main_menu() {
             9)
                 echo
                 legendary_status
-                read -r -p "Press Enter to continue..."
+                pause
                 ;;
             10)
                 echo
                 edit_launch_options
-                read -r -p "Press Enter to continue..."
+                pause
                 ;;
             11)
+                echo
+                ensure_legendary force || true
+                check_and_update_apps || true
+                pause
+                ;;
+            12)
+                echo
+                repair_games
+                pause
+                ;;
+            13)
+                echo
+                ensure_legendary || true
+                if [[ "$(legendary_auth_state)" == "stored" ]]; then
+                    success "Already signed in as $(legendary_account)."
+                else
+                    legendary_login
+                fi
+                pause
+                ;;
+            14)
+                echo
+                paths_status
+                pause
+                ;;
+            15)
                 exit 0
                 ;;
             *)
